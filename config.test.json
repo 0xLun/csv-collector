@@ -1,0 +1,29 @@
+{ 
+  "rules": [
+    {
+      "name": "Bulma records",
+      "action": "keep-row",
+      "match": [{"fields": ["NAME","FISTNAME"], "regex": "bulma.*"}],
+      "write-truth" : { "field" : "SUPER-SAIYAN", "value" : "false"},
+      "case-sensitive": false
+    },
+    {
+      "name": "Vegeta records",
+      "action": "keep-row",
+      "match": [{"fields": ["NAME","FISTNAME"], "regex": "vegeta.*"}],
+      "write-truth" : { "field" : "SUPER-SAIYAN", "value" : "true"},
+      "case-sensitive": false
+    },
+    ],
+
+  "add-fields": [
+    { "name":"SUPER-SAIYAN", "after" : "AGE", "default-value": "" }
+  ], 
+
+  "output": {
+    "drop-unmatched" : false,
+    "fields": ["_rule", "_file","NAME", "FIRSTNAME","LASTNAME", "PHONE", "AGE","SUPER-SAIYAN"],
+    "rule-match-field": "_rule",
+    "file-processed-field": "_file"
+  }
+}
