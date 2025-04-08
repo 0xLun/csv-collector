@@ -1,10 +1,10 @@
 # csv-collector
 Simple CSV parser that collects fields based on regular expressions
 
-## Install 
+## Requirements
 
 ```
-pip install -r requirements.txt
+Python 3+
 ```
 
 ## Usage
