@@ -11,7 +11,6 @@ def log(message, level="info", verbosity=0, min_level=1):
     if verbosity >= min_level:
         print(f"{levels[level]} {message}", file=sys.stderr if level == "error" else sys.stdout)
 
-
 def load_config(config_path, verbosity):
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -20,7 +19,6 @@ def load_config(config_path, verbosity):
     except Exception as e:
         log(f"Unable to load config file '{config_path}': {e}", "error")
         sys.exit(1)
-
 
 def compute_output_fields(config, sample_row):
     base_fields = list(sample_row.keys())
@@ -47,18 +45,18 @@ def compute_output_fields(config, sample_row):
     output_fields = config.get("output", {}).get("fields")
     if not output_fields:
         output_fields = list(sample_row.keys())
-
-    rule_field = config["output"].get("rule-match-field", "_rule")
-    file_field = config["output"].get("file-processed-field", "_file")
-
-    if rule_field not in output_fields:
-        output_fields.insert(0, rule_field)
-    if file_field not in output_fields:
-        output_fields.insert(1, file_field)
-
+        
+        rule_field = config["output"].get("rule-match-field", "_rule")
+        file_field = config["output"].get("file-processed-field", "_file")
+        
+        if rule_field not in output_fields:
+            output_fields.insert(0, rule_field)
+        if file_field not in output_fields:
+            output_fields.insert(1, file_field)
+   
+    
     config["output"]["computed_fields"] = output_fields
     return output_fields
-
 
 def apply_match_assertions(row, rule, regex_flags):
     match_summary = []
@@ -80,73 +78,84 @@ def apply_write_truth(row, rule, match_summary):
     if write_truth:
         target_field = write_truth.get("field")
         value = write_truth.get("value", "")
-        if "$match" in value:
+        if "$match" in value.lower():
             summary_str = " AND ".join(match_summary)
             value = value.replace("$match", summary_str)
         row[target_field] = value
 
 
-def process_row(config, row, file_path, row_number, verbosity):
+def process_row(config, row, file_path, row_number, computed_fields, verbosity):
     rule_field = config["output"].get("rule-match-field", "_rule")
+    if rule_field in computed_fields and rule_field not in row : row[rule_field] = ""
     processed_rows = []
-    any_rule_matched = False
+    no_rule_matched = True
+
+    # 🛠 Apply default values to missing fields
+    for field_def in config.get("add-fields", []):
+        name = field_def["name"]
+        default = field_def.get("default-value", "")
+        if name not in row or row[name] == "":
+            row[name] = default
 
     for rule in config.get("rules", []):
         regex_flags = 0 if rule.get("case-sensitive", False) else re.IGNORECASE
         rule_name = rule.get("name", "no-name")
         action = rule.get("action")
         write_truth = rule.get("write-truth")
+        log(f"Processing rule {rule_name} with '{action}' action", "debug", verbosity, 4)
 
-        # Evaluate match assertions and gather a summary.
         matched, match_summary = apply_match_assertions(row, rule, regex_flags)
 
         if not matched:
             continue
         
         log(f"Match rule {rule['name']} in {file_path} at row {row_number} ", "info", verbosity, 2)
+        no_rule_matched = False
 
-        any_rule_matched = True
-
-        # If a drop rule matches, drop the row immediately.
         if action == "drop-row":
             log(f"Dropping row {row_number} due to rule '{rule_name}'", "info", verbosity, 2)
-            return []  # Do not output anything for this row.
+            return []
 
-        # For a replace action, update the row in place.
-        if action == "replace":
+        elif action == "replace":
             for assertion in rule.get("match", []):
                 for field in assertion.get("fields", []):
                     regex = assertion.get("regex")
                     if field in row:
                         row[field] = re.sub(regex, rule.get("replace-by", ""), row[field], flags=regex_flags)
-            # Apply write-truth if configured.
-            apply_write_truth(row, rule, match_summary)
+            if write_truth : apply_write_truth(row, rule, match_summary)
 
-        # For a keep-row action, create a copy of the row with modifications.
-        if action == "keep-row":
+        elif action == "create-row":
             row_copy = row.copy()
-            apply_write_truth(row_copy, rule, match_summary)
-            row_copy[rule_field] = rule_name
+            if write_truth : apply_write_truth(row_copy, rule, match_summary)
+            if rule_field in computed_fields : row_copy[rule_field] = rule_name
             processed_rows.append(row_copy)
 
-    # If no rule matched (and no drop occurred), return the original row.
-    if not any_rule_matched :
-        if "drop-unmatched" in config["output"] or config["output"]["drop-unmatched"] :
-            return [] 
+        elif action == "pipe":
+            if write_truth : apply_write_truth(row, rule, match_summary)
+            if rule_field in computed_fields :
+                if row[rule_field]:
+                    row[rule_field] = " | ".join([row[rule_field], rule_name])
+                else:
+                    row[rule_field] = rule_name
+
+    if no_rule_matched:
+        if config["output"].get("drop-unmatched"):
+            log(f"Dropping row {row_number} due to no match", "info", verbosity, 4)
+            return []
+        log(f"Unprocessed row {row_number} returned despite no match", "info", verbosity, 4)
         return [row]
 
-    # If one or more rules have matched (for replace, the row was modified in place),
-    # and no keep-row rule was applied, output the modified row.
     if not processed_rows:
+        log(f"Unprocessed row {row_number} returned", "debug", verbosity, 4)
         return [row]
 
+    log(f"Processed row {row_number} returned", "debug", verbosity, 4)
     return processed_rows
 
 
 def process_csv(file_path, config, writer, verbosity):
-    rule_field = config["output"].get("rule-match-field", "_rule")
     file_field = config["output"].get("file-processed-field", "_file")
-
+    computed_fields = None
     try:
         with open(file_path, newline="", encoding="utf-8") as csvfile:
             reader = csv.DictReader(csvfile)
@@ -163,15 +172,17 @@ def process_csv(file_path, config, writer, verbosity):
                     continue
 
                 if "computed_fields" not in config["output"]:
-                    computed = compute_output_fields(config, row.copy())
-                    writer.fieldnames = computed
+                    computed_fields = compute_output_fields(config, row.copy())
+                    writer.fieldnames = computed_fields
                     writer.writeheader()
+                else :
+                    computed_fields = config["output"]["computed_fields"]
 
                 log(f"Processing row {row_number} in '{file_path}'", "debug", verbosity, 3)
-                matched_rows = process_row(config, row, file_path, row_number, verbosity)
+                matched_rows = process_row(config, row, file_path, row_number,computed_fields, verbosity)
 
                 for matched_row in matched_rows:
-                    matched_row[file_field] = os.path.basename(file_path)
+                    if file_field in computed_fields : matched_row[file_field] = os.path.basename(file_path)
                     output_row = {key: matched_row.get(key, "") for key in writer.fieldnames}
                     writer.writerow(output_row)
 
@@ -192,7 +203,6 @@ def process_directory(input_path, config, writer, verbosity):
     for file_name in csv_files:
         file_path = os.path.join(input_path, file_name)
         process_csv(file_path, config, writer, verbosity)
-
 
 def main():
     parser = argparse.ArgumentParser(description="Parse CSV files based on regex rules")
@@ -215,6 +225,9 @@ def main():
     except Exception as e:
         log(f"Unable to write to output file '{args.output}': {e}", "error")
         sys.exit(1)
+    
+    log(f"Processing end", "info", args.verbose, 4)
+    
 
 
 if __name__ == "__main__":
