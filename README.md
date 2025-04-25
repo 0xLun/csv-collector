@@ -1,4 +1,4 @@
-# csv-explorer
+# csv-explorer #CSVE
 Simple CSV parser that collects fields based on regular expressions
 
 ## Requirements
@@ -9,16 +9,16 @@ Python 3+
 
 ## Usage
 ```
-python3 cc.py -i <input-folder|input-file> -o <output-file> -c <config-file> -<verbosity>
+python3 csve.py -i <input-folder|input-file> -o <output-file> -c <config-file> -<verbosity>
 ```
 ```
-python3 cc.py -i ./files/ -o ./output.csv -c ./config.json -vv
+python3 csve.py -i ./files/ -o ./output.csv -c ./config.json -vv
 ```
 
 ## Manual 
 
 ```
-usage: cc.py [-h] -i INPUT -o OUTPUT -c CONFIG [-v]
+usage: csve.py [-h] -i INPUT -o OUTPUT -c CONFIG [-v]
 
 Parse CSV files based on regex rules
 
